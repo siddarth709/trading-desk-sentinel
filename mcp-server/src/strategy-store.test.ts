@@ -99,6 +99,22 @@ describe("FileStrategyStore", () => {
     await expect(store.getState()).rejects.toThrow();
   });
 
+  // Regression coverage for the Qodo finding "Invalid state shape
+  // succeeds": syntactically valid JSON that isn't a well-formed
+  // StrategyState (null, an array, or entries with the wrong field types)
+  // must surface as a storage failure, not a false-empty or corrupt state
+  // that later crashes disable() at `state[symbol] = ...`.
+  it.each([
+    ["null", "null"],
+    ["an array", "[]"],
+    ["a non-object entry", JSON.stringify({ SPY: "disabled" })],
+    ["an entry with the wrong field types", JSON.stringify({ SPY: { disabled: "yes", reason: "x", at: "x" } })],
+  ])("getState rejects when the file contains %s instead of a valid StrategyState", async (_label, contents) => {
+    await writeFile(path, contents);
+    const store = new FileStrategyStore(path);
+    await expect(store.getState()).rejects.toThrow(/unexpected shape/);
+  });
+
   it("writes atomically, so a reader never observes a partially-written file", async () => {
     const store = new FileStrategyStore(path);
     await store.disable("SPY", "reason");

@@ -59,6 +59,27 @@ export function retryableInit(init: () => Promise<void>): () => Promise<void> {
 }
 
 /**
+ * Structural check that a parsed JSON value actually matches StrategyState
+ * (a plain object mapping symbols to well-formed disable records), so
+ * `readExisting` doesn't cast a malformed-but-syntactically-valid file
+ * (`null`, `[]`, `{"AAPL": {"disabled": "yes"}}`, ...) through as if it
+ * were real state.
+ */
+function isStrategyState(value: unknown): value is StrategyState {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.values(value).every(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { disabled?: unknown }).disabled === "boolean" &&
+      typeof (entry as { reason?: unknown }).reason === "string" &&
+      typeof (entry as { at?: unknown }).at === "string",
+  );
+}
+
+/**
  * Local-file store. Fine for local development, where the process and its
  * working directory persist for the life of the session — but this must
  * never be the store used in the Render deployment: free web services have
@@ -112,18 +133,35 @@ export class FileStrategyStore implements StrategyStore {
   }
 
   private async readExisting(): Promise<StrategyState> {
+    let raw: string;
     try {
-      return JSON.parse(await readFile(this.path, "utf8"));
+      raw = await readFile(this.path, "utf8");
     } catch (err) {
       // A file that has genuinely never been written (nothing disabled
       // yet) is the ONLY case that legitimately means "empty". Anything
-      // else — permission denied, a directory where a file was expected,
-      // corrupt/truncated JSON — is a real storage failure and must
-      // propagate, not be swallowed into a false-empty "nothing disabled"
-      // result.
+      // else — permission denied, a directory where a file was expected —
+      // is a real storage failure and must propagate, not be swallowed
+      // into a false-empty "nothing disabled" result.
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
       throw err;
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error(`Corrupt strategy state file at ${this.path}: not valid JSON`);
+    }
+
+    // Valid JSON isn't necessarily a valid StrategyState — `null`, an
+    // array, or an object with malformed entries would otherwise be cast
+    // through as-is and either report a false-empty state or crash later
+    // at `state[symbol] = ...`. Only a genuinely well-shaped object counts;
+    // anything else is a corrupt-storage failure, same as bad JSON.
+    if (!isStrategyState(parsed)) {
+      throw new Error(`Corrupt strategy state file at ${this.path}: unexpected shape`);
+    }
+    return parsed;
   }
 
   async checkHealth(): Promise<void> {

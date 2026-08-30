@@ -15,12 +15,25 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
  */
 export function resolveMcpUrl(env: NodeJS.ProcessEnv = process.env): string {
   const url = env.SENTINEL_MCP_URL ?? "http://127.0.0.1:8791/mcp";
-  let hostname: string;
+  let parsed: URL;
   try {
-    hostname = new URL(url).hostname;
+    parsed = new URL(url);
   } catch {
     throw new Error(`SENTINEL_MCP_URL is not a valid URL: "${url}"`);
   }
+  // This connector is an HTTP(S) MCP endpoint — any other scheme (ftp:,
+  // ws:, file:, ...) is a misconfiguration that should fail loudly at
+  // registration time rather than being silently registered as-is.
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `SENTINEL_MCP_URL must use http or https, got "${parsed.protocol}" in "${url}"`,
+    );
+  }
+  // Node's URL parser keeps the brackets on an IPv6 hostname (e.g. "[::1]"
+  // for http://[::1]:8791/mcp), so strip them before comparing against the
+  // bare "::1" loopback literal — otherwise IPv6 loopback URLs are (wrongly)
+  // treated as deployed and demand a shared secret they don't need.
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
   const isLoopback = LOOPBACK_HOSTNAMES.has(hostname);
   if (!isLoopback && !env.MCP_SHARED_SECRET) {
     throw new Error(
