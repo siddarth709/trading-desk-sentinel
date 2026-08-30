@@ -44,5 +44,18 @@ export function resolveMcpUrl(env: NodeJS.ProcessEnv = process.env): string {
       "See README's \"Deploying to Render\" section for the full command.",
     );
   }
+  // register.ts sends MCP_SHARED_SECRET as a bearer token on every request
+  // to this URL. Plaintext http: is fine for loopback (traffic never
+  // leaves the machine), but for any deployed host it would put the
+  // credential — and every authenticated request — on the wire in the
+  // clear, interceptable and tamperable in transit. Only loopback gets an
+  // http: exemption; every non-loopback host must use https:.
+  if (!isLoopback && parsed.protocol !== "https:") {
+    throw new Error(
+      `SENTINEL_MCP_URL ("${url}") is a non-loopback host using "${parsed.protocol}" — deployed MCP ` +
+      "servers must use https: so MCP_SHARED_SECRET isn't sent as a bearer token over plaintext HTTP. " +
+      "Use the https:// URL Render gives the sentinel-alpaca-mcp service.",
+    );
+  }
   return url;
 }

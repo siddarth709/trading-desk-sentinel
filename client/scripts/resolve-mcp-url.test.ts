@@ -47,4 +47,17 @@ describe("resolveMcpUrl", () => {
   it("recognizes the IPv6 loopback address, no secret required", () => {
     expect(resolveMcpUrl({ SENTINEL_MCP_URL: "http://[::1]:8791/mcp" })).toBe("http://[::1]:8791/mcp");
   });
+
+  // Regression coverage for the Qodo finding "Bearer secret sent
+  // plaintext": a non-loopback URL must use https: even when
+  // MCP_SHARED_SECRET is set, since register.ts sends that secret as a
+  // bearer token on every request to this URL.
+  it("rejects a plaintext http:// URL for a non-loopback host, even with the secret set", () => {
+    expect(() =>
+      resolveMcpUrl({
+        SENTINEL_MCP_URL: "http://sentinel-alpaca-mcp.onrender.com/mcp",
+        MCP_SHARED_SECRET: "generated-secret",
+      }),
+    ).toThrow(/must use https/);
+  });
 });
