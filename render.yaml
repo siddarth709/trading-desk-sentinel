@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: sentinel-alpaca-mcp
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm install && npm run build --workspace mcp-server
+    startCommand: npm start --workspace mcp-server
+    healthCheckPath: /health
+    envVars:
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: MCP_SHARED_SECRET
+        generateValue: true
+
+  - type: web
+    name: sentinel-ui
+    runtime: static
+    rootDir: .
+    buildCommand: npm install && npm run build --workspace ui
+    staticPublishPath: ui/dist
+    envVars:
+      - key: VITE_TRUEFORGE_BASE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

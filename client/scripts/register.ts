@@ -22,6 +22,8 @@ function requireSkillRepoUrl(): string {
 }
 
 async function main() {
+  const sharedSecret = process.env.MCP_SHARED_SECRET;
+
   await client.settings.mcpServers.createOrUpdate({
     manifest: {
       name: "sentinel-alpaca-mcp",
@@ -30,6 +32,9 @@ async function main() {
       description:
         "OAA's paper-trading account: read-only account/positions/orders/history, plus " +
         "destructive flatten_position and disable_strategy (approval-gated).",
+      ...(sharedSecret && {
+        auth: { type: "header", headers: { Authorization: `Bearer ${sharedSecret}` } },
+      }),
     },
   });
   console.log("Registered MCP connector: sentinel-alpaca-mcp");

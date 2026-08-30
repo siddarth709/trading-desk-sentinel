@@ -122,7 +122,7 @@ function buildServer(): McpServer {
       try {
         state = JSON.parse(await readFile(STRATEGY_STATE_PATH, "utf8"));
       } catch {
-        // No kill-switch state has been created yet; start with an empty registry.
+        state = {};
       }
       state[symbol] = { disabled: true, reason, at: new Date().toISOString() };
       await writeFile(STRATEGY_STATE_PATH, JSON.stringify(state, null, 2));
@@ -137,6 +137,22 @@ function buildServer(): McpServer {
 
 const app = express();
 app.use(express.json());
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+const SHARED_SECRET = process.env.MCP_SHARED_SECRET;
+if (SHARED_SECRET) {
+  app.use("/mcp", (req, res, next) => {
+    const provided = req.headers["authorization"];
+    if (provided === `Bearer ${SHARED_SECRET}`) {
+      next();
+      return;
+    }
+    res.status(401).json({ error: "Missing or invalid Authorization header." });
+  });
+}
 
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -167,6 +183,7 @@ app.all("/mcp", async (req, res) => {
 });
 
 const PORT = Number(process.env.PORT ?? 8791);
-app.listen(PORT, "127.0.0.1", () => {
-  console.log(`sentinel-alpaca-mcp listening on http://127.0.0.1:${PORT}/mcp`);
+const HOST = process.env.HOST ?? "0.0.0.0";
+app.listen(PORT, HOST, () => {
+  console.log(`sentinel-alpaca-mcp listening on http://${HOST}:${PORT}/mcp`);
 });
