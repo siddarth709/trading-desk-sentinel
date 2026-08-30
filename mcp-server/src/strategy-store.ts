@@ -1,4 +1,7 @@
-import { writeFile, readFile } from "node:fs/promises";
+import { writeFile, readFile, rename, access } from "node:fs/promises";
+import { constants } from "node:fs";
+import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 
 export type StrategyState = Record<string, { disabled: boolean; reason: string; at: string }>;
@@ -13,6 +16,12 @@ export interface StrategyStore {
    * pipeline can poll it over HTTP instead of reading a local file —
    * the only integration path that works the same way regardless of
    * whether disable() is backed by Postgres or the local file fallback.
+   *
+   * Must reject on a real storage failure (permission error, corrupt data,
+   * unreachable database) rather than resolving to `{}` — this is the
+   * pre-scan kill-switch gate, so an empty-looking "success" response is
+   * indistinguishable from "nothing is disabled" and would let OAA trade a
+   * symbol it should be blocked from.
    */
   getState(): Promise<StrategyState>;
   /**
@@ -26,6 +35,30 @@ export interface StrategyStore {
 }
 
 /**
+ * Wraps a one-shot async initializer so concurrent callers share the same
+ * in-flight attempt (no duplicate CREATE TABLE races), but a rejection is
+ * NOT cached forever the way a plain `this.ready = init()` field would be —
+ * once a JS promise rejects, awaiting it always rethrows the same error, so
+ * a transient failure at construction time (e.g. the database briefly
+ * unreachable at startup) would otherwise permanently poison every later
+ * disable/getState/checkHealth call for the life of the process. Here, a
+ * rejection clears the cached attempt so the *next* caller gets a fresh
+ * try instead of the same dead promise.
+ */
+export function retryableInit(init: () => Promise<void>): () => Promise<void> {
+  let pending: Promise<void> | null = null;
+  return () => {
+    if (!pending) {
+      pending = init().catch((err) => {
+        pending = null;
+        throw err;
+      });
+    }
+    return pending;
+  };
+}
+
+/**
  * Local-file store. Fine for local development, where the process and its
  * working directory persist for the life of the session — but this must
  * never be the store used in the Render deployment: free web services have
@@ -36,11 +69,13 @@ export interface StrategyStore {
 export class FileStrategyStore implements StrategyStore {
   readonly description: string;
 
-  // Serializes disable() calls against this file. Without this, two
-  // concurrent disables (e.g. two symbols flagged moments apart) can both
-  // read the same on-disk state before either writes, and the second
-  // write silently clobbers the first symbol's entry — a classic
-  // read-modify-write race on a single shared file.
+  // Serializes disable() calls (and getState() reads) against this file.
+  // Without this, two concurrent disables can both read the same on-disk
+  // state before either writes and the second write clobbers the first
+  // symbol's entry, and a getState() racing a disable() could observe a
+  // half-written file. This promise is always swallowed to a resolution
+  // (see the `.catch(() => {})` below), so awaiting it never throws — it
+  // exists purely to sequence access, not to report a write's outcome.
   private writeQueue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly path: string) {
@@ -50,35 +85,61 @@ export class FileStrategyStore implements StrategyStore {
   async disable(symbol: string, reason: string): Promise<{ at: string }> {
     const at = new Date().toISOString();
     const task = this.writeQueue.then(async () => {
-      let state: StrategyState = {};
-      try {
-        state = JSON.parse(await readFile(this.path, "utf8"));
-      } catch {
-        state = {};
-      }
+      const state = await this.readExisting();
       state[symbol] = { disabled: true, reason, at };
-      await writeFile(this.path, JSON.stringify(state, null, 2));
+      // Write atomically (temp file + rename) so a concurrent getState()
+      // — or a crash mid-write — never observes a partially-written file.
+      // rename() is atomic on the same filesystem, which a sibling temp
+      // file in the same directory guarantees.
+      const tmpPath = `${this.path}.${randomUUID()}.tmp`;
+      await writeFile(tmpPath, JSON.stringify(state, null, 2));
+      await rename(tmpPath, this.path);
     });
     // Keep the queue alive even if this write fails, so a failed disable
-    // doesn't permanently wedge every disable() call after it; the
-    // rejection itself still propagates to this caller.
+    // doesn't permanently wedge every disable()/getState() call after it;
+    // the rejection itself still propagates to this caller via `await task`.
     this.writeQueue = task.catch(() => {});
     await task;
     return { at };
   }
 
   async getState(): Promise<StrategyState> {
+    // Wait for any write currently queued or in-flight, so a read never
+    // observes a half-written file (writeQueue is already error-swallowed
+    // above, so this never throws on a prior write's behalf).
+    await this.writeQueue;
+    return this.readExisting();
+  }
+
+  private async readExisting(): Promise<StrategyState> {
     try {
       return JSON.parse(await readFile(this.path, "utf8"));
-    } catch {
-      return {};
+    } catch (err) {
+      // A file that has genuinely never been written (nothing disabled
+      // yet) is the ONLY case that legitimately means "empty". Anything
+      // else — permission denied, a directory where a file was expected,
+      // corrupt/truncated JSON — is a real storage failure and must
+      // propagate, not be swallowed into a false-empty "nothing disabled"
+      // result.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+      throw err;
     }
   }
 
-  // The local file fallback has no external dependency to go down; being
-  // constructed is sufficient. Read/write failures surface directly from
-  // disable()/getState() instead.
-  async checkHealth(): Promise<void> {}
+  async checkHealth(): Promise<void> {
+    try {
+      // File exists — confirm it's actually readable and writable rather
+      // than just present (a permission error here means disable() and
+      // getState() will fail too).
+      await access(this.path, constants.R_OK | constants.W_OK);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      // Nothing disabled yet, so the file doesn't exist — healthy as long
+      // as disable() would actually be able to create it, i.e. the parent
+      // directory itself is writable.
+      await access(dirname(this.path), constants.W_OK);
+    }
+  }
 }
 
 /**
@@ -97,16 +158,14 @@ export class PostgresStrategyStore implements StrategyStore {
   readonly description = "the durable strategy_state table";
 
   private readonly pool: Pool;
-  private readonly ready: Promise<void>;
+  private readonly ready: () => Promise<void>;
 
   constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
-      // Without these, a database that's up but unresponsive (network
-      // partition, connection storm, etc.) makes disable(), getState(),
-      // and checkHealth() hang indefinitely instead of failing. That
-      // defeats the point of the /health check: Render needs a bounded
-      // answer to tell "slow" from "down" and act on it.
+      // Fail fast instead of hanging: an unresponsive database should
+      // surface as a normal rejected call (and a 503/502 at the HTTP
+      // layer), not a request that never completes.
       connectionTimeoutMillis: 5_000,
       statement_timeout: 5_000,
     });
@@ -116,26 +175,29 @@ export class PostgresStrategyStore implements StrategyStore {
     this.pool.on("error", (err) => {
       console.error("Unexpected error on idle Postgres client:", err);
     });
-    this.ready = this.pool
-      .query(
-        `CREATE TABLE IF NOT EXISTS strategy_state (
-           symbol TEXT PRIMARY KEY,
-           disabled BOOLEAN NOT NULL,
-           reason TEXT NOT NULL,
-           at TIMESTAMPTZ NOT NULL
-         )`,
-      )
-      .then(() => undefined);
-    // The table-creation query above runs immediately, before any caller has
-    // a chance to await `ready` (e.g. via disable()). Without this, a
-    // failure here — say, an unreachable database at startup — surfaces as
-    // an unhandled promise rejection instead of a normal error the first
-    // time disable() is actually called and awaits `ready` itself.
-    this.ready.catch(() => {});
+
+    this.ready = retryableInit(() =>
+      this.pool
+        .query(
+          `CREATE TABLE IF NOT EXISTS strategy_state (
+             symbol TEXT PRIMARY KEY,
+             disabled BOOLEAN NOT NULL,
+             reason TEXT NOT NULL,
+             at TIMESTAMPTZ NOT NULL
+           )`,
+        )
+        .then(() => undefined),
+    );
+    // Kick off initialization eagerly so the common case (Postgres already
+    // reachable) pays no extra latency on the first real call, without
+    // leaving an unhandled rejection if it fails before anyone awaits it —
+    // a later disable()/getState()/checkHealth() call will retry via
+    // `this.ready()` regardless of whether this eager attempt succeeded.
+    this.ready().catch(() => {});
   }
 
   async disable(symbol: string, reason: string): Promise<{ at: string }> {
-    await this.ready;
+    await this.ready();
     const at = new Date().toISOString();
     await this.pool.query(
       `INSERT INTO strategy_state (symbol, disabled, reason, at)
@@ -147,7 +209,7 @@ export class PostgresStrategyStore implements StrategyStore {
   }
 
   async getState(): Promise<StrategyState> {
-    await this.ready;
+    await this.ready();
     const { rows } = await this.pool.query<{ symbol: string; disabled: boolean; reason: string; at: string | Date }>(
       `SELECT symbol, disabled, reason, at FROM strategy_state`,
     );
@@ -163,7 +225,7 @@ export class PostgresStrategyStore implements StrategyStore {
   }
 
   async checkHealth(): Promise<void> {
-    await this.ready;
+    await this.ready();
     await this.pool.query("SELECT 1");
   }
 }

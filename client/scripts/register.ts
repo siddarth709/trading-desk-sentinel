@@ -1,6 +1,7 @@
 
 import { TrueForge } from "@truefoundry/trueforge-sdk";
 import { readFile } from "node:fs/promises";
+import { resolveMcpUrl } from "./resolve-mcp-url.js";
 
 const client = new TrueForge({
   baseUrl: process.env.TRUEFORGE_BASE_URL ?? "http://localhost:8790",
@@ -28,7 +29,7 @@ async function main() {
     manifest: {
       name: "sentinel-alpaca-mcp",
       type: "remote",
-      url: process.env.SENTINEL_MCP_URL ?? "http://127.0.0.1:8791/mcp",
+      url: resolveMcpUrl(),
       description:
         "OAA's paper-trading account: read-only account/positions/orders/history, plus " +
         "destructive flatten_position and disable_strategy (approval-gated).",
