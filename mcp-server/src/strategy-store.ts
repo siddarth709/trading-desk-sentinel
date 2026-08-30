@@ -7,6 +7,22 @@ export interface StrategyStore {
   /** Human-readable description of where state is kept, for tool responses. */
   readonly description: string;
   disable(symbol: string, reason: string): Promise<{ at: string }>;
+  /**
+   * Full current kill-switch state. This is the read side that the
+   * `/strategy-state` HTTP endpoint exposes so the separately-built OAA
+   * pipeline can poll it over HTTP instead of reading a local file —
+   * the only integration path that works the same way regardless of
+   * whether disable() is backed by Postgres or the local file fallback.
+   */
+  getState(): Promise<StrategyState>;
+  /**
+   * Cheap connectivity check used by GET /health. A store that can't
+   * actually persist a disable shouldn't report healthy just because the
+   * Node process is up — Render uses /health to decide whether to keep
+   * routing traffic (and restart the service), so this needs to reflect
+   * the real backend, not just process liveness.
+   */
+  checkHealth(): Promise<void>;
 }
 
 /**
@@ -20,22 +36,49 @@ export interface StrategyStore {
 export class FileStrategyStore implements StrategyStore {
   readonly description: string;
 
+  // Serializes disable() calls against this file. Without this, two
+  // concurrent disables (e.g. two symbols flagged moments apart) can both
+  // read the same on-disk state before either writes, and the second
+  // write silently clobbers the first symbol's entry — a classic
+  // read-modify-write race on a single shared file.
+  private writeQueue: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly path: string) {
     this.description = path;
   }
 
   async disable(symbol: string, reason: string): Promise<{ at: string }> {
-    let state: StrategyState = {};
-    try {
-      state = JSON.parse(await readFile(this.path, "utf8"));
-    } catch {
-      state = {};
-    }
     const at = new Date().toISOString();
-    state[symbol] = { disabled: true, reason, at };
-    await writeFile(this.path, JSON.stringify(state, null, 2));
+    const task = this.writeQueue.then(async () => {
+      let state: StrategyState = {};
+      try {
+        state = JSON.parse(await readFile(this.path, "utf8"));
+      } catch {
+        state = {};
+      }
+      state[symbol] = { disabled: true, reason, at };
+      await writeFile(this.path, JSON.stringify(state, null, 2));
+    });
+    // Keep the queue alive even if this write fails, so a failed disable
+    // doesn't permanently wedge every disable() call after it; the
+    // rejection itself still propagates to this caller.
+    this.writeQueue = task.catch(() => {});
+    await task;
     return { at };
   }
+
+  async getState(): Promise<StrategyState> {
+    try {
+      return JSON.parse(await readFile(this.path, "utf8"));
+    } catch {
+      return {};
+    }
+  }
+
+  // The local file fallback has no external dependency to go down; being
+  // constructed is sufficient. Read/write failures surface directly from
+  // disable()/getState() instead.
+  async checkHealth(): Promise<void> {}
 }
 
 /**
@@ -57,7 +100,16 @@ export class PostgresStrategyStore implements StrategyStore {
   private readonly ready: Promise<void>;
 
   constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString });
+    this.pool = new Pool({
+      connectionString,
+      // Without these, a database that's up but unresponsive (network
+      // partition, connection storm, etc.) makes disable(), getState(),
+      // and checkHealth() hang indefinitely instead of failing. That
+      // defeats the point of the /health check: Render needs a bounded
+      // answer to tell "slow" from "down" and act on it.
+      connectionTimeoutMillis: 5_000,
+      statement_timeout: 5_000,
+    });
     // Required by the pg docs: an idle client can emit an error in the
     // background (e.g. the connection being dropped by the server), and
     // without this handler that crashes the whole process.
@@ -92,6 +144,27 @@ export class PostgresStrategyStore implements StrategyStore {
       [symbol, reason, at],
     );
     return { at };
+  }
+
+  async getState(): Promise<StrategyState> {
+    await this.ready;
+    const { rows } = await this.pool.query<{ symbol: string; disabled: boolean; reason: string; at: string | Date }>(
+      `SELECT symbol, disabled, reason, at FROM strategy_state`,
+    );
+    const state: StrategyState = {};
+    for (const row of rows) {
+      state[row.symbol] = {
+        disabled: row.disabled,
+        reason: row.reason,
+        at: row.at instanceof Date ? row.at.toISOString() : row.at,
+      };
+    }
+    return state;
+  }
+
+  async checkHealth(): Promise<void> {
+    await this.ready;
+    await this.pool.query("SELECT 1");
   }
 }
 

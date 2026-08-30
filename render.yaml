@@ -24,6 +24,12 @@ services:
     startCommand: npm start --workspace mcp-server
     healthCheckPath: /health
     envVars:
+      - key: HOST
+        value: 0.0.0.0
+        # Required in deployment: the code now defaults to 127.0.0.1 (safe
+        # for local dev without a shared secret), which Render's health
+        # checker and external traffic cannot reach. This override is what
+        # makes the deployed service reachable again.
       - key: ALPACA_API_KEY
         sync: false
       - key: ALPACA_SECRET_KEY

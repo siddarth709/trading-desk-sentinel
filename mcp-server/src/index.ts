@@ -123,10 +123,13 @@ function buildServer(): McpServer {
     {
       title: "Disable Strategy (IRREVERSIBLE until re-enabled)",
       description:
-        "Flips a local kill-switch file that a patched OAA main.py checks before scanning a symbol — " +
-        "the documented integration point between this incident responder and the OAA pipeline built " +
-        "separately. Disabling stops OAA from opening any NEW position; it does not touch existing ones " +
-        "(use flatten_position for that). Only call after root cause is established.",
+        "Records a kill-switch entry that a patched OAA main.py polls via this server's " +
+        "GET /strategy-state endpoint before scanning a symbol — the documented integration point " +
+        "between this incident responder and the OAA pipeline built separately. Polling this endpoint, " +
+        "rather than reading a local file, means the disable is observed by OAA the same way whether " +
+        "this server is backed by Postgres (Render) or the local file fallback (npm run dev). Disabling " +
+        "stops OAA from opening any NEW position; it does not touch existing ones (use flatten_position " +
+        "for that). Only call after root cause is established.",
       inputSchema: {
         symbol: z.string().describe("Watchlist symbol to disable, e.g. SPY"),
         reason: z.string().describe("Root-cause summary to record alongside the kill-switch"),
@@ -149,21 +152,50 @@ function buildServer(): McpServer {
 const app = express();
 app.use(express.json());
 
-app.get("/health", (_req, res) => {
-  res.status(200).json({ status: "ok" });
+app.get("/health", async (_req, res) => {
+  try {
+    await strategyStore.checkHealth();
+    res.status(200).json({ status: "ok" });
+  } catch (err) {
+    // Render polls this to decide whether to route traffic and whether to
+    // restart the service. Reporting "ok" while the kill-switch store is
+    // unreachable would hide an outage that makes disable_strategy silently
+    // fail — surface it as unhealthy instead.
+    console.error("Health check failed: strategy store unreachable:", err);
+    res.status(503).json({ status: "error", detail: "strategy store unreachable" });
+  }
 });
 
 const SHARED_SECRET = process.env.MCP_SHARED_SECRET;
 if (SHARED_SECRET) {
-  app.use("/mcp", (req, res, next) => {
+  const requireSharedSecret: express.RequestHandler = (req, res, next) => {
     const provided = req.headers["authorization"];
     if (provided === `Bearer ${SHARED_SECRET}`) {
       next();
       return;
     }
     res.status(401).json({ error: "Missing or invalid Authorization header." });
-  });
+  };
+  app.use("/mcp", requireSharedSecret);
+  // OAA polls this with the same shared secret; it carries the same
+  // kill-switch reasons the MCP tool records, so it gets the same gate.
+  app.use("/strategy-state", requireSharedSecret);
 }
+
+// Read-only integration point for the separately-built OAA pipeline: the
+// documented contract is "poll this endpoint before scanning a symbol,"
+// not "read a local file." That keeps OAA's view of the kill-switch
+// correct regardless of whether disable_strategy is currently backed by
+// Postgres (Render) or the local strategy_state.json fallback (dev).
+app.get("/strategy-state", async (_req, res) => {
+  try {
+    const state = await strategyStore.getState();
+    res.status(200).json(state);
+  } catch (err) {
+    console.error("Failed to read strategy state:", err);
+    res.status(502).json({ error: "Failed to read strategy state." });
+  }
+});
 
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -194,7 +226,13 @@ app.all("/mcp", async (req, res) => {
 });
 
 const PORT = Number(process.env.PORT ?? 8791);
-const HOST = process.env.HOST ?? "0.0.0.0";
+// Bound to loopback by default, matching the README's documented
+// `http://127.0.0.1:8791/mcp` quick-start URL. This matters because
+// MCP_SHARED_SECRET is normally unset in local dev (see the Quick start
+// section) — binding 0.0.0.0 by default would put an unauthenticated MCP
+// server, including the /strategy-state kill-switch reader, on the LAN.
+// The Render deployment overrides this via the HOST env var in render.yaml.
+const HOST = process.env.HOST ?? "127.0.0.1";
 app.listen(PORT, HOST, () => {
   console.log(`sentinel-alpaca-mcp listening on http://${HOST}:${PORT}/mcp`);
 });
