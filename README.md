@@ -61,7 +61,7 @@ The MCP service listens on `http://127.0.0.1:8791/mcp` by default.
 
 ### Prerequisites
 
-- Node.js 20 or later
+- Node.js 22 or later (required by the TrueForge SDK)
 - An Alpaca **paper-trading** API key and secret
 - A running TrueForge instance for live agent workflows
 
@@ -110,6 +110,20 @@ npm run start --workspace client
 VITE_TRUEFORGE_BASE_URL="http://127.0.0.1:8790" npm run dev --workspace ui
 # Open the URL printed by Vite (normally http://127.0.0.1:5173).
 ```
+
+### Deploying the dashboard to Render
+
+The dashboard is deployed as a Node web service rather than a static site. A
+static site cannot proxy the SDK's streaming requests, and a browser request
+directly to a separately hosted TrueForge server can fail because of CORS.
+`ui/server.mjs` serves the built dashboard and forwards `/truforge-api/*` to
+TrueForge on the server side.
+
+When using `render.yaml`, set `TRUEFORGE_BASE_URL` on the `sentinel-ui`
+service to the public HTTPS URL of the TrueForge server, then redeploy. Do not
+set `VITE_TRUEFORGE_BASE_URL` on the Render UI service; that would make the
+browser bypass the same-origin proxy. The UI service must start with
+`npm start --workspace ui`, as configured in the Blueprint.
 
 ### UI-only development
 

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "An incident-response agent, built on TrueForge, that investigates paper-trading account anomalies and pauses for human approval before anything irreversible.",
+  "engines": {
+    "node": ">=22"
+  },
   "workspaces": [
     "mcp-server",
     "client",

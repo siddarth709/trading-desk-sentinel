@@ -43,14 +43,14 @@ services:
 
   - type: web
     name: sentinel-ui
-    runtime: static
+    runtime: node
     rootDir: .
     buildCommand: npm install && npm run build --workspace ui
-    staticPublishPath: ui/dist
+    startCommand: npm start --workspace ui
+    healthCheckPath: /health
     envVars:
-      - key: VITE_TRUEFORGE_BASE_URL
-        value: https://trueforge.onrender.com/api/v1
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+      # Keep the TrueForge URL server-side. The UI talks to /truforge-api on
+      # its own origin, and this service proxies the SDK's streaming requests
+      # to TrueForge. That avoids browser CORS failures after deployment.
+      - key: TRUEFORGE_BASE_URL
+        sync: false
