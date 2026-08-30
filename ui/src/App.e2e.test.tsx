@@ -7,7 +7,6 @@ import App from "./App";
 
 expect.extend(matchers);
 
-const PORT = 8790;
 let server: http.Server;
 
 beforeAll(async () => {
