@@ -109,7 +109,7 @@ ALERT="Paper-account equity dropped noticeably in the last session. Investigate 
 npm run start --workspace client
 
 # Browser dashboard
-npm run dev --workspace ui
+VITE_TRUEFORGE_BASE_URL="http://127.0.0.1:8790" npm run dev --workspace ui
 # Open the URL printed by Vite (normally http://127.0.0.1:5173).
 ```
 
@@ -118,7 +118,7 @@ npm run dev --workspace ui
 You can exercise the dashboard without Alpaca credentials or a TrueForge instance:
 
 ```bash
-node mock-server/server.mjs
+PORT=8792 node mock-server/server.mjs
 VITE_TRUEFORGE_BASE_URL="http://127.0.0.1:8792" npm run dev --workspace ui
 ```
 
@@ -140,7 +140,7 @@ The CI workflow runs the same sequence on pull requests and pushes to `main`.
 
 ## Design notes
 
-- **Paper only:** the Alpaca integration is pinned to the paper endpoint; tests assert that a live-trading host is never targeted by default.
+- **Paper only:** the Alpaca integration is pinned to the paper endpoint; non-paper `ALPACA_BASE_URL` overrides are rejected at runtime.
 - **Evidence first:** the agent playbook calls for account state, history, positions, and orders before it proposes an intervention.
 - **Approval is structural:** destructive annotations and the TrueForge policy enforce the pause; it is not reliant on prompt wording.
 - **Least surprise:** when the investigation is inconclusive, the intended behavior is to report uncertainty and stop.
