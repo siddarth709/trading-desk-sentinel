@@ -130,7 +130,13 @@ beforeAll(async () => {
   });
 
   await new Promise<void>((resolve) => {
-    server.listen(PORT, "127.0.0.1", () => resolve());
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address === "object") {
+        process.env.VITE_TRUEFORGE_BASE_URL = `http://127.0.0.1:${address.port}`;
+      }
+      resolve();
+    });
   });
 });
 

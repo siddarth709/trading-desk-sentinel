@@ -7,7 +7,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/truforge-api": {
-        target: process.env.TRUEFORGE_BASE_URL ?? "http://127.0.0.1:8790",
+        // Point to the mock TrueForge server. Switch to http://127.0.0.1:8790
+        // once a real model provider is configured in the live TrueForge instance.
+        target: process.env.TRUEFORGE_BASE_URL ?? "http://127.0.0.1:8792",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/truforge-api/, ""),
       },
