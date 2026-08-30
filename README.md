@@ -53,7 +53,7 @@ The MCP service listens on `http://127.0.0.1:8791/mcp` by default.
 | `get_positions` | Read-only | Inspect current exposure and P&L. |
 | `get_recent_orders` | Read-only | Correlate an event with recent fills and order state. |
 | `flatten_position` | Approval required | Close one named paper position at market. |
-| `disable_strategy` | Approval required | Record a local kill-switch entry for a named symbol. |
+| `disable_strategy` | Approval required | Record a kill-switch entry for a named symbol, readable via `GET /strategy-state`. |
 
 `flatten_position` and `disable_strategy` have `destructiveHint: true`. The agent manifest requests approval for all destructive tools, and both the CLI and dashboard wait for the corresponding `tool.approval_required` event. No order is submitted before a user allows it.
 
@@ -80,7 +80,21 @@ npm run dev --workspace mcp-server
 npx @truefoundry/trueforge
 
 # Terminal 3 — register the connector, skill, and agent.
+#
+# LOCAL DEVELOPMENT:
 TRUEFORGE_BASE_URL="http://127.0.0.1:8790" \
+SENTINEL_MCP_URL="http://127.0.0.1:8791/mcp" \
+SKILL_REPO_URL="https://github.com/siddarth709/trading-desk-sentinel" \
+npm run register --workspace client
+
+# DEPLOYED RENDER MCP:
+#
+# Replace YOUR-RENDER-SERVICE with the hostname of the deployed
+# sentinel-alpaca-mcp Render service and paste the generated
+# MCP_SHARED_SECRET from the Render service environment.
+TRUEFORGE_BASE_URL="https://YOUR-TRUEFORGE-HOST" \
+SENTINEL_MCP_URL="https://YOUR-RENDER-SERVICE.onrender.com/mcp" \
+MCP_SHARED_SECRET="YOUR_RENDER_GENERATED_SECRET" \
 SKILL_REPO_URL="https://github.com/siddarth709/trading-desk-sentinel" \
 npm run register --workspace client
 ```
@@ -129,6 +143,10 @@ The CI workflow runs the same sequence on pull requests and pushes to `main`.
 - **Approval is structural:** destructive annotations and the TrueForge policy enforce the pause; it is not reliant on prompt wording.
 - **Least surprise:** when the investigation is inconclusive, the intended behavior is to report uncertainty and stop.
 - **Secrets stay local:** provide credentials through environment variables. Do not commit `.env` files or the generated `strategy_state.json` kill-switch state.
+- **Kill-switch state is durable in deployment:** `disable_strategy` writes to a Postgres table (`sentinel-strategy-state` in `render.yaml`, wired in via `DATABASE_URL`) whenever `DATABASE_URL` is set, so a restart, redeploy, or free-plan spin-down can never silently undo a disable. Local `npm run dev` without `DATABASE_URL` falls back to the local `strategy_state.json` file — convenient for development, but that fallback must never be relied on in the Render deployment, since a free web service's filesystem is ephemeral. Note: Render's free Postgres plan is auto-deleted 30 days after creation, so the database needs recreating (and `DATABASE_URL` updating) before then, or upgrading to a paid plan.
+- **OAA integration reads over HTTP, not a local file:** the documented contract for the separately-built OAA pipeline is `GET /strategy-state` on this server (protected by `MCP_SHARED_SECRET` when it's set), not a local `strategy_state.json` on OAA's own filesystem. That endpoint proxies whichever backend `disable_strategy` is currently using (Postgres in deployment, the local file in dev), so a disable is always visible to OAA the same way. A patched OAA `main.py` that instead reads a local file will silently miss every disable recorded in Postgres — update it to poll `/strategy-state` before scanning a symbol.
+- **Bound to loopback by default:** the MCP service listens on `127.0.0.1` unless `HOST` is set, matching the "Quick start" URL above. `MCP_SHARED_SECRET` is normally unset in local dev, so binding `0.0.0.0` by default would put an unauthenticated server — including the `/strategy-state` kill-switch reader — on the local network. `render.yaml` sets `HOST=0.0.0.0` for the deployed service, where `MCP_SHARED_SECRET` is always generated.
+- **`/health` reflects the kill-switch store, not just process liveness:** it calls into whichever `StrategyStore` is active (a no-op for the local file, `SELECT 1` for Postgres) and returns `503` if that fails. Render polls this path to decide whether to route traffic and whether to restart the service, so a database outage that would silently break `disable_strategy` is surfaced instead of masked behind a `200`.
 
 ## Repository map
 

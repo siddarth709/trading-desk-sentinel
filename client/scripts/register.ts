@@ -1,6 +1,7 @@
 
 import { TrueForge } from "@truefoundry/trueforge-sdk";
 import { readFile } from "node:fs/promises";
+import { resolveMcpUrl } from "./resolve-mcp-url.js";
 
 const client = new TrueForge({
   baseUrl: process.env.TRUEFORGE_BASE_URL ?? "http://localhost:8790",
@@ -22,14 +23,19 @@ function requireSkillRepoUrl(): string {
 }
 
 async function main() {
+  const sharedSecret = process.env.MCP_SHARED_SECRET;
+
   await client.settings.mcpServers.createOrUpdate({
     manifest: {
       name: "sentinel-alpaca-mcp",
       type: "remote",
-      url: process.env.SENTINEL_MCP_URL ?? "http://127.0.0.1:8791/mcp",
+      url: resolveMcpUrl(),
       description:
         "OAA's paper-trading account: read-only account/positions/orders/history, plus " +
         "destructive flatten_position and disable_strategy (approval-gated).",
+      ...(sharedSecret && {
+        auth: { type: "header", headers: { Authorization: `Bearer ${sharedSecret}` } },
+      }),
     },
   });
   console.log("Registered MCP connector: sentinel-alpaca-mcp");
