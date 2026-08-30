@@ -31,23 +31,7 @@ The approval boundary is part of the tool metadata and agent policy—not an ins
 
 ## What is in the repository
 
-```text
-                  ┌─────────────────────────┐
-                  │  React dashboard / CLI   │
-                  │  live transcript + gate  │
-                  └────────────┬────────────┘
-                               │ TrueForge events
-                  ┌────────────▼────────────┐
-                  │  Trading Desk Sentinel   │
-                  │  agent + response skill  │
-                  └────────────┬────────────┘
-                               │ Streamable HTTP MCP
-                  ┌────────────▼────────────┐
-                  │    Alpaca Paper MCP      │
-                  │ reads + approval-gated   │
-                  │     destructive tools    │
-                  └─────────────────────────┘
-```
+![Trading Desk Sentinel approval-gated paper-trading architecture](docs/trading-desk-sentinel-architecture.png)
 
 | Directory | Role |
 | --- | --- |
@@ -165,6 +149,25 @@ npm run test --workspace ui
 ## Contributing
 
 Keep changes focused, type-safe, and verified. The complete local setup and verification expectations are in [CONTRIBUTING.md](CONTRIBUTING.md). In particular, test changes to MCP annotations or event handling against the actual installed SDK interfaces rather than relying on remembered protocol shapes.
+
+## Qodo review and fixes
+
+Qodo is used as an automated reviewer for substantive pull requests. Its findings are treated as concrete engineering work: verify the reported behavior in the repository, make the smallest safe correction, and add regression coverage when a safety or correctness invariant is involved.
+
+### What Qodo helped improve
+
+| Finding | Resolution |
+| --- | --- |
+| The documented CI sequence did not match the workflow's build order. | The workflow now builds `mcp-server` before the tests that start its compiled server, and `CONTRIBUTING.md` documents that same sequence. |
+| A non-paper `ALPACA_BASE_URL` could bypass the paper-only claim. | `mcp-server/src/alpaca.ts` now accepts only the exact Alpaca Paper endpoint and rejects other overrides before a request is sent. A unit test covers the rejection. |
+| The UI-only setup started the mock service on a different port than the dashboard used. | The README explicitly starts the mock server on port `8792` and points the dashboard at it. |
+| The live dashboard example did not point at the live TrueForge instance. | The live quick start now passes `VITE_TRUEFORGE_BASE_URL=http://127.0.0.1:8790`. |
+
+This review loop is especially valuable here because the project has two hard boundaries worth protecting: paper-trading-only access and explicit human approval for destructive tools.
+
+## Hackathon context
+
+Trading Desk Sentinel was built for the Agent Harness Hackathon (WeMakeDevs × TrueFoundry × Qodo). The project focuses on a verifiable approval workflow, a Git-backed incident-response skill, a live event-driven UI, and automated review as part of its development process.
 
 ## Disclaimer
 
