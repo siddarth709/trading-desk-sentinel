@@ -6,9 +6,6 @@ import {
 } from "recharts";
 import InvestigationLoader from "./Preloader";
 
-/* ═══════════════════════════════════════════════════
-   VECTOR ICONS (CLEAN SVG)
-═══════════════════════════════════════════════════ */
 const Icons = {
   Shield: () => (
     <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -225,7 +222,6 @@ function parseArgs(argsStr: string): [string, string][] | null {
       return Object.entries(obj).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]);
     }
   } catch {
-    // Tool arguments may be streamed before they form valid JSON.
   }
   return null;
 }
@@ -249,7 +245,6 @@ function formatToolOutput(toolName: string | undefined, raw: string): string {
       return `Status: ${d.status.toUpperCase()}  |  Order #${d.order_id}  |  Liquidated ${d.qty} ${d.symbol} @ $${d.filled_avg_price}`;
     }
   } catch {
-    // Some diagnostic tools return plain text rather than structured JSON.
   }
   return raw.length > 220 ? raw.slice(0, 220) + "..." : raw;
 }
@@ -262,17 +257,31 @@ function formatElapsed(ms: number): string {
 }
 
 export default function App() {
-  const [baseUrl] = useState(
-    () =>
-      import.meta.env.VITE_TRUEFORGE_BASE_URL ??
-      (typeof process !== "undefined" && process.env.VITE_TRUEFORGE_BASE_URL
-        ? process.env.VITE_TRUEFORGE_BASE_URL
-        : typeof process !== "undefined" && process.env.NODE_ENV === "test"
-          ? "http://127.0.0.1:8790"
-          : "/truforge-api"),
-  );
+  const [baseUrl] = useState(() => {
+  const configuredUrl =
+    import.meta.env.VITE_TRUEFORGE_BASE_URL ??
+    (typeof process !== "undefined"
+      ? process.env.VITE_TRUEFORGE_BASE_URL
+      : undefined);
 
-  // App Navigation View
+  if (configuredUrl) {
+    const normalized = configuredUrl.replace(/\/+$/, "");
+
+    return normalized.endsWith("/api/v1")
+      ? normalized
+      : `${normalized}/api/v1`;
+  }
+
+  if (
+    typeof process !== "undefined" &&
+    process.env.NODE_ENV === "test"
+  ) {
+    return "http://127.0.0.1:8790";
+  }
+
+  return "/truforge-api/api/v1";
+});
+
   const [currentView, setCurrentView] = useState<"landing" | "analyzer">("landing");
 
 
@@ -382,7 +391,6 @@ export default function App() {
                 const d = JSON.parse(event.content);
                 setStats((s) => ({ ...(s || { equity: "0", lastEquity: "0" }), equity: d.equity, lastEquity: d.last_equity }));
               } catch {
-                // Continue rendering the raw tool output when account data is malformed.
               }
             }
             if (toolName === "get_portfolio_history") {
@@ -392,7 +400,6 @@ export default function App() {
                   setHistorySeries(d.equity_series);
                 }
               } catch {
-                // Continue rendering the raw tool output when history data is malformed.
               }
             }
             if (toolName === "get_recent_orders") {
@@ -410,7 +417,6 @@ export default function App() {
                   })));
                 }
               } catch {
-                // Continue rendering the raw tool output when order data is malformed.
               }
             }
             if (toolName === "get_positions") {
@@ -433,7 +439,6 @@ export default function App() {
                   })));
                 }
               } catch {
-                // Continue rendering the raw tool output when position data is malformed.
               }
             }
 
@@ -535,7 +540,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* ── TOP NAVIGATION (NO ALPACA TAG, FIXED BUTTONS) ── */}
       <header className="topbar">
         <div className="topbar-left">
           <div className="brand" onClick={() => setCurrentView("landing")}>
@@ -581,11 +585,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── CONDITIONAL VIEW ROUTING ── */}
       {currentView === "landing" ? (
-        /* ═══════════════════════════════════════════════════
-           1. ANIMATED LANDING PAGE OVERVIEW
-        ═══════════════════════════════════════════════════ */
+
         <div key="landing" className="landing-container view-frame landing-view">
           <div className="landing-content">
             {/* HERO SECTION */}
@@ -687,9 +688,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        /* ═══════════════════════════════════════════════════
-           2. 3-COLUMN ANALYZER DESK WORKSPACE
-        ═══════════════════════════════════════════════════ */
+        
         <div
           key="analyzer"
           className={`workspace view-frame analyzer-view status-${status} ${dashboardReady ? "dashboard-ready" : "dashboard-loading"}`}
@@ -1189,9 +1188,7 @@ export default function App() {
   );
 }
 
-/* ─────────────────────────────────────────────
-   STREAM ROW COMPONENT
-───────────────────────────────────────────── */
+
 function TranscriptRow({ item }: { item: TranscriptItem }) {
   if (item.kind === "text") {
     return <div className="feed-item-card type-text">{item.text}</div>;
