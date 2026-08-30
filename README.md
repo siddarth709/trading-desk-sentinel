@@ -175,14 +175,11 @@ correct:
 
 ## Qodo Code Review Evidence
 
-*(Fill in once this repo is pushed to GitHub and Qodo is connected —
-required by the hackathon rules for every submission, not only the
-Best Code Quality track.)*
+Merged PR: Pull Request #1: Fix CI workflow and contributor guide command alignment
 
-- Merged PR: `<link to a representative PR with meaningful hackathon code>`
-- What Qodo surfaced: `<1-2 sentences — what it flagged, what you changed
-  or intentionally dismissed and why>`
-- Follow-up review: `<link showing a second Qodo pass against the final code>`
+What Qodo surfaced: Qodo flagged a maintainability bug noting that CONTRIBUTING.md falsely claimed to document the exact sequence run by CI, whereas CI invoked test commands directly and omitted rebuilding the mcp-server workspace. We resolved this by updating .github/workflows/ci.yml and CONTRIBUTING.md to ensure the documented commands and CI pipeline matched precisely.
+
+Follow-up review: Qodo Code Review #1
 
 ## Safety
 
