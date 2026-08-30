@@ -49,7 +49,7 @@ services:
     staticPublishPath: ui/dist
     envVars:
       - key: VITE_TRUEFORGE_BASE_URL
-        sync: false
+        value: https://trueforge.onrender.com/api/v1
     routes:
       - type: rewrite
         source: /*
