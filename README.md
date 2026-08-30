@@ -73,9 +73,12 @@ ui/           React + TypeScript web dashboard. Talks directly to a
               built-in TrueForge UI adapter hasn't shipped yet as of this
               build — see "What's verified" below). Streams the transcript
               live and shows a dedicated approval card for destructive
-              tool calls. Verified with a jsdom end-to-end test against a
-              schema-accurate mock server (mock-server/), since no
+              tool calls. Verified with a jsdom end-to-end test against an
+              inline, schema-accurate mock TrueForge server, since no
               browser is available to screenshot in the build environment.
+              (`mock-server/` is separate — a standalone fake-TrueForge
+              server for manual `npm run dev` testing, not what the
+              automated test runs against.)
 ```
 
 ## Setup
@@ -114,13 +117,16 @@ npm run dev   # proxies /truforge-api to TRUEFORGE_BASE_URL (default localhost:8
 ## Development
 
 ```bash
-npm run lint        # ESLint across every workspace — zero errors
-npm run typecheck    # tsc --noEmit across every workspace
-npm run test         # vitest — see mcp-server/src/*.test.ts, ui/src/App.e2e.test.tsx
-npm run build        # production build for mcp-server, client, and ui
+npm run lint                        # ESLint across every workspace — zero errors
+npm run typecheck                   # tsc --noEmit across every workspace
+npm run build --workspace mcp-server  # mcp-server's test suite spawns dist/index.js —
+                                       # build it first on a fresh clone
+npm run test                        # vitest — see mcp-server/src/*.test.ts, ui/src/App.e2e.test.tsx
+npm run build                       # production build for mcp-server, client, and ui
 ```
 
-CI (`.github/workflows/ci.yml`) runs all four on every push and PR.
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, the mcp-server pre-build,
+test, and build — in that order — on every push and PR.
 
 ## What's verified vs. what needs a live TrueForge instance
 
@@ -138,13 +144,18 @@ correct:
   type-checked clean against `@truefoundry/trueforge-sdk@0.1.3` as actually
   published to npm. Two real naming mistakes were caught and fixed this way.
 - `ui/src/App.tsx` is production-build-verified (`vite build` succeeds) and
-  covered by a jsdom end-to-end test that drives the real component through
-  investigating -> tool call -> approval gate -> approve -> done, against a
-  schema-accurate mock TrueForge server. Building that mock against the SDK's
-  actual `.d.ts` files (rather than assumed shapes) caught two further real
-  bugs: a missing `{data: ...}` response envelope, and a wrong assumption
-  that tool calls arrive as a standalone `model.message` event — the real
-  wire protocol only has `model.message.delta`.
+  covered by a jsdom end-to-end test (`ui/src/App.e2e.test.tsx`) that drives
+  the real component through landing page -> launch analyzer -> run
+  investigation -> tool call -> approval gate -> approve -> done, against a
+  schema-accurate mock TrueForge server **built inline in the test file**
+  (a local `http.createServer`, not `mock-server/` — see the note below).
+  Building that mock against the SDK's actual `.d.ts` files (rather than
+  assumed shapes) caught two further real bugs: a missing `{data: ...}`
+  response envelope, and a wrong assumption that tool calls arrive as a
+  standalone `model.message` event — the real wire protocol only has
+  `model.message.delta`. jsdom also doesn't implement `Element.scrollIntoView`
+  (it doesn't do layout), so `ui/src/setupTests.ts` stubs it as a no-op —
+  otherwise the transcript auto-scroll effect throws in every test.
 - What has **not** been run: an actual TrueForge server instance, registering
   these against it live, and a full end-to-end investigation with a real
   model and real Alpaca paper credentials. That requires a running TrueForge
@@ -153,14 +164,14 @@ correct:
   reason (Chromium isn't obtainable in that environment) — the e2e test is
   the honest substitute.
 
-> **Known gap:** `mock-server/` (the schema-accurate mock TrueForge server
-> the e2e test above depends on) is referenced by this test, the PR
-> template, and CONTRIBUTING.md, but is not currently checked into this
-> repo — confirm it's committed before relying on `npm test` or CI passing
-> end to end. If it needs to be rebuilt, generate it against your own
-> running TrueForge instance's interactive API docs at `/api/v1/docs`
-> rather than reconstructing it from memory, the same standard the rest of
-> this README holds itself to.
+> **What `mock-server/` actually is:** it's a standalone fake-TrueForge HTTP
+> server for *interactive* development — run it locally and point
+> `ui`'s dev proxy (`TRUEFORGE_BASE_URL`, default `http://127.0.0.1:8790`) at
+> it to click through the dashboard by hand, complete with real Yahoo
+> Finance data for a realistic equity curve. It is **not** what
+> `App.e2e.test.tsx` runs against — that test is fully self-contained. If
+> you're touching event-shape assumptions, update both: the inline mock in
+> the test file, and `mock-server/server.mjs` for manual testing.
 
 ## Qodo Code Review Evidence
 

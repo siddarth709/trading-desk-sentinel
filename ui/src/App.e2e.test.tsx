@@ -138,15 +138,21 @@ afterAll(() => {
   server.close();
 });
 
-describe("Trading Desk Sentinel dashboard (against the mock TrueForge server)", () => {
+describe("Sentinel Trading Desk dashboard (against the mock TrueForge server)", () => {
   it("streams an investigation and reaches the approval gate for a destructive tool call", async () => {
     render(<App />);
 
-    expect(screen.getByText(/Trading Desk Sentinel/i)).toBeInTheDocument();
+    // Landing view: brand chrome is present, and no status pill yet — the
+    // pill only mounts once we've switched into the analyzer view.
+    expect(screen.getByText(/SENTINEL TRADING DESK/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("status-pill")).not.toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /Launch Incident Analyzer/i }));
     expect(screen.getByTestId("status-pill")).toHaveTextContent("Standing by");
+
+    // AAPL/default narrative are pre-filled, so Run Investigation is
+    // immediately clickable without any extra setup.
     await user.click(screen.getByRole("button", { name: /Run Investigation/i }));
 
     // Status flips to Investigating almost immediately.
@@ -160,11 +166,14 @@ describe("Trading Desk Sentinel dashboard (against the mock TrueForge server)", 
     await waitFor(() => expect(screen.getByTestId("status-pill")).toHaveTextContent("Waiting for you"), { timeout: 5000 });
     await waitFor(() => expect(screen.getAllByText("flatten_position").length).toBeGreaterThan(0));
     expect(screen.getByText(/Nothing has been changed yet/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Approve/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Deny/i })).toBeInTheDocument();
+    // The irreversibility warning for this specific tool must be shown, not
+    // just a generic approval prompt.
+    expect(screen.getByText(/non-reversible once submitted to the venue/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Approve action/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Keep unchanged/i })).toBeInTheDocument();
 
     // Approve — the turn resumes and the mock server reports the position closed.
-    await user.click(screen.getByRole("button", { name: /Approve/i }));
+    await user.click(screen.getByRole("button", { name: /Approve action/i }));
     await waitFor(() => expect(screen.getByTestId("status-pill")).toHaveTextContent("Investigation complete"), { timeout: 5000 });
     expect(screen.getByText(/Position closed/i)).toBeInTheDocument();
   }, 15000);
