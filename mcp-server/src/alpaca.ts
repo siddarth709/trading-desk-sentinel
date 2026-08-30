@@ -1,4 +1,24 @@
-const BASE_URL = process.env.ALPACA_BASE_URL ?? "https://paper-api.alpaca.markets";
+const PAPER_BASE_URL = "https://paper-api.alpaca.markets";
+
+export function getAlpacaBaseUrl(): string {
+  const envUrl = process.env.ALPACA_BASE_URL;
+  if (!envUrl) return PAPER_BASE_URL;
+
+  try {
+    const url = new URL(envUrl);
+    if (url.origin === PAPER_BASE_URL && url.pathname === "/" && !url.search && !url.hash) {
+      return PAPER_BASE_URL;
+    }
+  } catch {
+    // Report malformed URLs using the same safe, user-facing error below.
+  }
+
+  throw new Error(
+    `Invalid ALPACA_BASE_URL: "${envUrl}". Only the Alpaca paper-trading endpoint is permitted.`,
+  );
+}
+
+const BASE_URL = getAlpacaBaseUrl();
 const API_KEY = process.env.ALPACA_API_KEY ?? "";
 const SECRET_KEY = process.env.ALPACA_SECRET_KEY ?? "";
 

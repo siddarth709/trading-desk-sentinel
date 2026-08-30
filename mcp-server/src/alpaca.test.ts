@@ -77,7 +77,6 @@ describe("alpaca.ts", () => {
   });
 
   it("never targets a live-trading host regardless of how ALPACA_BASE_URL is set", async () => {
-
     delete process.env.ALPACA_BASE_URL;
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
     vi.stubGlobal("fetch", fetchMock);
@@ -88,5 +87,14 @@ describe("alpaca.ts", () => {
     const calledUrl = fetchMock.mock.calls[0][0] as string;
     expect(new URL(calledUrl).hostname).toBe("paper-api.alpaca.markets");
     expect(new URL(calledUrl).hostname).not.toBe("api.alpaca.markets"); // the live-trading host
+  });
+
+  it("rejects non-paper ALPACA_BASE_URL overrides before making a request", async () => {
+    process.env.ALPACA_BASE_URL = "https://api.alpaca.markets";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(import("./alpaca.js")).rejects.toThrow(/Only the Alpaca paper-trading endpoint/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
