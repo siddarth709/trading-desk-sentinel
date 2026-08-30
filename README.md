@@ -129,6 +129,7 @@ The CI workflow runs the same sequence on pull requests and pushes to `main`.
 - **Approval is structural:** destructive annotations and the TrueForge policy enforce the pause; it is not reliant on prompt wording.
 - **Least surprise:** when the investigation is inconclusive, the intended behavior is to report uncertainty and stop.
 - **Secrets stay local:** provide credentials through environment variables. Do not commit `.env` files or the generated `strategy_state.json` kill-switch state.
+- **Kill-switch state is durable in deployment:** `disable_strategy` writes to a Postgres table (`sentinel-strategy-state` in `render.yaml`, wired in via `DATABASE_URL`) whenever `DATABASE_URL` is set, so a restart, redeploy, or free-plan spin-down can never silently undo a disable. Local `npm run dev` without `DATABASE_URL` falls back to the local `strategy_state.json` file — convenient for development, but that fallback must never be relied on in the Render deployment, since a free web service's filesystem is ephemeral. Note: Render's free Postgres plan is auto-deleted 30 days after creation, so the database needs recreating (and `DATABASE_URL` updating) before then, or upgrading to a paid plan.
 
 ## Repository map
 

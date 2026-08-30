@@ -1,6 +1,5 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
-import { writeFile, readFile } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -12,8 +11,25 @@ import {
   getPortfolioHistory,
   flattenPosition,
 } from "./alpaca.js";
+import { createStrategyStore } from "./strategy-store.js";
 
 const STRATEGY_STATE_PATH = process.env.STRATEGY_STATE_PATH ?? "./strategy_state.json";
+const DATABASE_URL = process.env.DATABASE_URL;
+
+// On Render, DATABASE_URL is always set (render.yaml wires it from the
+// sentinel-strategy-state database), so disable_strategy persists durably.
+// Locally, without a DATABASE_URL, it falls back to STRATEGY_STATE_PATH —
+// convenient for `npm run dev`, but never safe to rely on in the deployment,
+// since a free Render web service's filesystem is wiped on every restart,
+// redeploy, or spin-down.
+if (!DATABASE_URL) {
+  console.warn(
+    `DATABASE_URL not set; disable_strategy will persist to ${STRATEGY_STATE_PATH}. ` +
+      "That's fine for local development, but this must never be the case when " +
+      "running on Render's free plan — its filesystem is ephemeral.",
+  );
+}
+const strategyStore = createStrategyStore(DATABASE_URL, STRATEGY_STATE_PATH);
 
 function buildServer(): McpServer {
   const server = new McpServer({ name: "sentinel-alpaca-mcp", version: "0.1.0" });
@@ -118,16 +134,11 @@ function buildServer(): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ symbol, reason }) => {
-      let state: Record<string, { disabled: boolean; reason: string; at: string }> = {};
-      try {
-        state = JSON.parse(await readFile(STRATEGY_STATE_PATH, "utf8"));
-      } catch {
-        state = {};
-      }
-      state[symbol] = { disabled: true, reason, at: new Date().toISOString() };
-      await writeFile(STRATEGY_STATE_PATH, JSON.stringify(state, null, 2));
+      const { at } = await strategyStore.disable(symbol, reason);
       return {
-        content: [{ type: "text", text: `Disabled ${symbol}. Recorded in ${STRATEGY_STATE_PATH}: ${reason}` }],
+        content: [
+          { type: "text", text: `Disabled ${symbol} at ${at}. Recorded in ${strategyStore.description}: ${reason}` },
+        ],
       };
     },
   );

@@ -1,0 +1,46 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { createStrategyStore, FileStrategyStore, PostgresStrategyStore } from "./strategy-store.js";
+
+describe("createStrategyStore", () => {
+  it("falls back to a FileStrategyStore when no DATABASE_URL is given", () => {
+    const store = createStrategyStore(undefined, "./strategy_state.json");
+    expect(store).toBeInstanceOf(FileStrategyStore);
+  });
+
+  it("chooses PostgresStrategyStore whenever a DATABASE_URL is given, so Render deploys never fall back to the ephemeral filesystem", () => {
+    const store = createStrategyStore("postgres://user:pass@host/db", "./strategy_state.json");
+    expect(store).toBeInstanceOf(PostgresStrategyStore);
+    expect(store.description).toBe("the durable strategy_state table");
+  });
+});
+
+describe("FileStrategyStore", () => {
+  const path = join(tmpdir(), `strategy-state-${randomUUID()}.json`);
+
+  afterEach(async () => {
+    await rm(path, { force: true });
+  });
+
+  it("creates the file on first disable and records disabled/reason/at", async () => {
+    const store = new FileStrategyStore(path);
+    const { at } = await store.disable("SPY", "unexplained drawdown");
+
+    const written = JSON.parse(await readFile(path, "utf8"));
+    expect(written).toEqual({ SPY: { disabled: true, reason: "unexplained drawdown", at } });
+  });
+
+  it("merges into existing entries instead of clobbering other symbols", async () => {
+    const store = new FileStrategyStore(path);
+    await store.disable("SPY", "first reason");
+    await store.disable("QQQ", "second reason");
+
+    const written = JSON.parse(await readFile(path, "utf8"));
+    expect(Object.keys(written).sort()).toEqual(["QQQ", "SPY"]);
+    expect(written.SPY.reason).toBe("first reason");
+    expect(written.QQQ.reason).toBe("second reason");
+  });
+});
