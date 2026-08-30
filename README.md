@@ -80,7 +80,21 @@ npm run dev --workspace mcp-server
 npx @truefoundry/trueforge
 
 # Terminal 3 — register the connector, skill, and agent.
+#
+# LOCAL DEVELOPMENT:
 TRUEFORGE_BASE_URL="http://127.0.0.1:8790" \
+SENTINEL_MCP_URL="http://127.0.0.1:8791/mcp" \
+SKILL_REPO_URL="https://github.com/siddarth709/trading-desk-sentinel" \
+npm run register --workspace client
+
+# DEPLOYED RENDER MCP:
+#
+# Replace YOUR-RENDER-SERVICE with the hostname of the deployed
+# sentinel-alpaca-mcp Render service and paste the generated
+# MCP_SHARED_SECRET from the Render service environment.
+TRUEFORGE_BASE_URL="https://YOUR-TRUEFORGE-HOST" \
+SENTINEL_MCP_URL="https://YOUR-RENDER-SERVICE.onrender.com/mcp" \
+MCP_SHARED_SECRET="YOUR_RENDER_GENERATED_SECRET" \
 SKILL_REPO_URL="https://github.com/siddarth709/trading-desk-sentinel" \
 npm run register --workspace client
 ```
